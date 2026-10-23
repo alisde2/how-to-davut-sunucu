@@ -1,0 +1,14 @@
+{
+  "name": "how-to-davut-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "How to Davut çok oyunculu sunucusu",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
