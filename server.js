@@ -43,8 +43,74 @@ const users = store('kullanicilar.json', {});
 /** Birlikte oynanan hikaye ilerlemesi */
 const story = store('hikaye.json', { ch: 0, step: 0, count: 0, intro: false, done: false });
 
+/** Oyuncu pazarı: satıştaki balıklar ve satıcıların toplanmamış kazançları */
+const market = store('pazar.json', { listings: [], payouts: {}, nextId: 1 });
+
 /** id -> oyuncu */
 const players = new Map();
+
+// ---------- Ortak dünya: saat, gün, hava ve etkinlikler herkes için aynı ----------
+const DAY_SECONDS = 18 * 60; // oyundaki gibi: bir gün 18 dakika
+const WEATHERS = [['acik', 50], ['bulutlu', 25], ['yagmur', 17], ['firtina', 8]];
+const worldState = { t0: Date.now(), hour0: 8, day0: 0, weather: 'acik' };
+function worldClock() {
+  const h = worldState.hour0 + ((Date.now() - worldState.t0) / 1000) * (24 / DAY_SECONDS);
+  return { hour: h % 24, day: worldState.day0 + Math.floor(h / 24) };
+}
+const worldMsg = () => ({ t: 'world', ...worldClock(), weather: worldState.weather });
+function rollWeather() {
+  let r = Math.random() * 100;
+  for (const [w, p] of WEATHERS) { r -= p; if (r <= 0) return w; }
+  return 'acik';
+}
+(function weatherLoop() {
+  setTimeout(() => {
+    const w = rollWeather();
+    if (w !== worldState.weather) {
+      worldState.weather = w;
+      broadcast(worldMsg());
+    }
+    weatherLoop();
+  }, (150 + Math.random() * 210) * 1000);
+})();
+// her 15 saniyede saat düzeltmesi
+setInterval(() => { if (players.size) broadcast(worldMsg()); }, 15000);
+// ortak etkinlikler: boss ve korsan baskını herkes için aynı anda olur
+const BOSS_ZONES = ['liman', 'sisli', 'buz', 'volkan', 'derin', 'akinti', 'mercan'];
+(function eventLoop() {
+  setTimeout(() => {
+    const zones = [...new Set([...players.values()].map((p) => p.zone))];
+    if (zones.length) {
+      const liman = zones.includes('liman');
+      const bossZones = zones.filter((z) => BOSS_ZONES.includes(z));
+      if (liman && Math.random() < 0.4) {
+        broadcast({ t: 'event', kind: 'raid', zone: 'liman' }, undefined, 'liman');
+        botAll('🏴‍☠️ Kara Korsan Liman Köyü\'ne saldırıyor! Herkes iskeleye!');
+      } else if (bossZones.length) {
+        const z = bossZones[Math.floor(Math.random() * bossZones.length)];
+        broadcast({ t: 'event', kind: 'boss', zone: z }, undefined, z);
+        botAll(`🌊 ${ZONE_NAMES[z] || z} sularında dev bir gölge görüldü!`);
+      }
+    }
+    eventLoop();
+  }, (8 + Math.random() * 6) * 60 * 1000);
+})();
+
+// ---------- Davut Adası ziyareti ----------
+const BUILD_IDS = ['kulube', 'balikci', 'dukkan', 'meyve', 'fener', 'ates'];
+function cleanIsland(d) {
+  if (!d || typeof d !== 'object') return null;
+  const plots = Array.isArray(d.plots) ? d.plots.slice(0, 6) : [];
+  return {
+    owned: !!d.owned,
+    plots: plots.map((p) => (p && BUILD_IDS.includes(p.type) ? { type: p.type, lv: Math.max(1, Math.min(3, num(p.lv, 1))), t0: 0, workers: Math.max(0, Math.min(3, num(p.workers))) } : null)),
+  };
+}
+
+// ---------- Oyuncu pazarı ----------
+const MARKET_MAX = 120;
+const MARKET_PER_SELLER = 6;
+const marketList = () => market.get().listings.slice(-MARKET_MAX).map((l) => ({ id: l.id, seller: l.seller, fish: l.fish, price: l.price, t: l.t }));
 let nextId = 1;
 
 // Çocuk dostu sohbet: kaba kelimeleri yıldızla
@@ -60,7 +126,7 @@ function clean(text) {
 
 // ---------- 🤖 Admin bot: sohbeti yönetir ----------
 const BOT = '🤖 Admin';
-const ZONE_NAMES = { liman: 'Liman Köyü', sisli: 'Sisli Göl', buz: 'Buz Koyu', volkan: 'Volkan Adası', derin: 'Derin Deniz', kayip: 'Kayıp Ada' };
+const ZONE_NAMES = { liman: 'Liman Köyü', sisli: 'Sisli Göl', buz: 'Buz Koyu', volkan: 'Volkan Adası', derin: 'Derin Deniz', kayip: 'Kayıp Ada', ada: 'Davut Adası', akinti: 'Karanlık Akıntı', acik: 'Açık Deniz', mercan: 'Mercan Resifi' };
 const RULES = [
   '1) Herkese saygılı ol, kaba konuşma yok.',
   '2) Sohbeti mesaj yağmuruna tutma (spam = susturma).',
@@ -271,7 +337,9 @@ wss.on('connection', (ws, req) => {
         p.look = cleanLook(m.look);
         p.joined = true;
         players.set(id, p);
-        send(ws, { t: 'welcome', id, players: [pub(botP), ...[...players.values()].filter((o) => o.id !== id).map(pub)], board: boardList(), story: story.get() });
+        send(ws, { t: 'welcome', id, players: [pub(botP), ...[...players.values()].filter((o) => o.id !== id).map(pub)], board: boardList(), story: story.get(), world: worldMsg() });
+        const owed = market.get().payouts[p.name];
+        if (owed) setTimeout(() => botTo(ws, `💰 Pazarda balıkların satıldı! Toplanacak kazanç: ${owed} ₺ (Pazar > Kazançlar)`), 2500);
         broadcast({ t: 'join', p: pub(p) }, id);
         broadcast({ t: 'announce', text: `🌍 ${p.name} oyuna katıldı!` }, id);
         setTimeout(() => botTo(ws, `Hoş geldin ${p.name}! ⚓ Komutlar için /yardim yaz. Kurallar: /kurallar`), 1500);
@@ -293,7 +361,88 @@ wss.on('connection', (ws, req) => {
       case 'zone':
         p.zone = String(m.zone || 'liman');
         broadcast({ t: 'zone', id, zone: p.zone }, id);
+        // Davut Adası'na gelene oradaki oyuncuların adalarını gönder
+        if (p.zone === 'ada') for (const o of players.values()) if (o.id !== id && o.zone === 'ada' && o.island) send(ws, { t: 'island', id: o.id, name: o.name, data: o.island });
         break;
+      case 'island': {
+        p.island = cleanIsland(m.data);
+        if (p.island && p.zone === 'ada') broadcast({ t: 'island', id, name: p.name, data: p.island }, id, 'ada');
+        break;
+      }
+      case 'coop': {
+        // birlikte büyük balık: savaşılan dev balığın canı ve yeri aynı adadakilere
+        const fish = String(m.fish || '').slice(0, 24);
+        if (!fish) return;
+        broadcast({ t: 'coop', id, name: p.name, fish, hp: Math.max(0, num(m.hp)), max: Math.max(1, num(m.max, 1)), x: num(m.x), y: num(m.y), z: num(m.z) }, id, p.zone);
+        break;
+      }
+      case 'coop_end':
+        broadcast({ t: 'coop_end', id, name: p.name, fish: String(m.fish || '').slice(0, 24), caught: !!m.caught, value: Math.max(0, Math.min(1e9, num(m.value))) }, id, p.zone);
+        if (m.caught) botAll(`🤝 ${p.name} dev balığı yakaladı!`);
+        break;
+      case 'coop_hit': {
+        const to = players.get(num(m.to));
+        if (!to || to.zone !== p.zone) return;
+        send(to.ws, { t: 'coop_hit', from: id, name: p.name, dmg: Math.max(1, Math.min(1e6, num(m.dmg, 1))) });
+        break;
+      }
+      case 'market_list':
+        send(ws, { t: 'market', list: marketList(), payout: market.get().payouts[p.name] || 0 });
+        break;
+      case 'market_sell': {
+        const f = m.fish || {};
+        const price = Math.round(num(m.price));
+        const M = market.get();
+        if (typeof f.id !== 'string' || f.id.length > 24 || price < 1 || price > 1e9) return;
+        if (M.listings.filter((l) => l.seller === p.name).length >= MARKET_PER_SELLER) {
+          send(ws, { t: 'market_err', text: `En fazla ${MARKET_PER_SELLER} balık satışa koyabilirsin.` });
+          return;
+        }
+        if (M.listings.length >= MARKET_MAX) {
+          send(ws, { t: 'market_err', text: 'Pazar dolu, biraz sonra dene.' });
+          return;
+        }
+        const fish = { id: f.id, kg: Math.max(0, Math.min(5000, num(f.kg))), value: Math.max(1, Math.min(1e7, num(f.value, 1))), mutation: typeof f.mutation === 'string' ? f.mutation.slice(0, 12) : undefined };
+        M.listings.push({ id: M.nextId++, seller: p.name, fish, price, t: Date.now() });
+        market.touch();
+        send(ws, { t: 'market_ok', text: 'Balığın pazara kondu!' });
+        broadcast({ t: 'market', list: marketList() });
+        break;
+      }
+      case 'market_buy': {
+        const M = market.get();
+        const i = M.listings.findIndex((l) => l.id === num(m.id));
+        if (i < 0) { send(ws, { t: 'market_err', text: 'Bu balık az önce satıldı.' }); return; }
+        const l = M.listings[i];
+        if (l.seller === p.name) return;
+        M.listings.splice(i, 1);
+        M.payouts[l.seller] = (M.payouts[l.seller] || 0) + l.price;
+        market.touch();
+        send(ws, { t: 'market_bought', fish: l.fish, price: l.price, seller: l.seller });
+        const seller = [...players.values()].find((o) => o.name === l.seller);
+        if (seller) send(seller.ws, { t: 'market_sold', fish: l.fish, price: l.price, buyer: p.name });
+        broadcast({ t: 'market', list: marketList() });
+        break;
+      }
+      case 'market_cancel': {
+        const M = market.get();
+        const i = M.listings.findIndex((l) => l.id === num(m.id) && l.seller === p.name);
+        if (i < 0) return;
+        const [l] = M.listings.splice(i, 1);
+        market.touch();
+        send(ws, { t: 'market_returned', fish: l.fish });
+        broadcast({ t: 'market', list: marketList() });
+        break;
+      }
+      case 'market_claim': {
+        const M = market.get();
+        const amount = M.payouts[p.name] || 0;
+        if (!amount) return;
+        delete M.payouts[p.name];
+        market.touch();
+        send(ws, { t: 'market_paid', amount });
+        break;
+      }
       case 'chat': {
         const { text, bad } = clean(m.text);
         if (!text) return;
