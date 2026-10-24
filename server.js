@@ -60,7 +60,7 @@ function clean(text) {
 
 // ---------- 🤖 Admin bot: sohbeti yönetir ----------
 const BOT = '🤖 Admin';
-const ZONE_NAMES = { liman: 'Liman Köyü', sisli: 'Sisli Göl', buz: 'Buz Koyu', volkan: 'Volkan Adası', derin: 'Derin Deniz' };
+const ZONE_NAMES = { liman: 'Liman Köyü', sisli: 'Sisli Göl', buz: 'Buz Koyu', volkan: 'Volkan Adası', derin: 'Derin Deniz', kayip: 'Kayıp Ada' };
 const RULES = [
   '1) Herkese saygılı ol, kaba konuşma yok.',
   '2) Sohbeti mesaj yağmuruna tutma (spam = susturma).',
@@ -76,6 +76,35 @@ const TIPS = [
   '💡 İpucu: 🎤 düğmesiyle sesli sohbeti açabilirsin.',
   '💡 İpucu: M tuşu ya da mini haritaya dokunmak büyük haritayı açar. 🗺️',
 ];
+
+/**
+ * Admin bot oyunda da görünür: Liman Köyü iskelesinde dolaşır, arada olta atar.
+ * Böylece sunucu hiç boş görünmez. (id 0, oyuncu sayısına/limite dahil değil)
+ */
+const botP = { id: 0, name: BOT, title: 'Sunucu Yöneticisi', zone: 'liman', color: 7, x: 0, y: 0.85, z: 32, ry: 0, anim: 'idle', level: 99, rebirths: 9 };
+const botAI = { tx: 0, tz: 32, wait: 3 };
+setInterval(() => {
+  const dt = 0.1;
+  const dx = botAI.tx - botP.x, dz = botAI.tz - botP.z;
+  const d = Math.hypot(dx, dz);
+  if (d > 0.1) {
+    const step = Math.min(d, 1.6 * dt);
+    botP.x += (dx / d) * step;
+    botP.z += (dz / d) * step;
+    botP.ry = Math.atan2(dx, dz);
+    botP.anim = 'walk';
+  } else {
+    botAI.wait -= dt;
+    // iskelenin ucunda denize dönüp olta atar
+    botP.ry = 0;
+    botP.anim = botP.z > 36 ? 'fish' : 'rod';
+    if (botAI.wait <= 0) {
+      botAI.tx = -0.8 + Math.random() * 1.6;
+      botAI.tz = 29 + Math.random() * 12;
+      botAI.wait = 6 + Math.random() * 10;
+    }
+  }
+}, 100);
 
 function botTo(ws, text) {
   send(ws, { t: 'chat', id: 0, name: BOT, text, bot: true });
@@ -127,6 +156,7 @@ function command(p, text) {
       break;
     case 'oyuncular': {
       const list = [...players.values()].map((o) => `${o.name} (${ZONE_NAMES[o.zone] || o.zone}, Sv ${o.level})`);
+      list.unshift(`${BOT} (Liman Köyü iskelesi)`);
       botTo(p.ws, `🌍 Çevrimiçi ${list.length}: ${list.join(', ')}`);
       break;
     }
@@ -149,6 +179,19 @@ function command(p, text) {
   }
 }
 
+/** Dolap görünüşü: sadece bilinen alanlar, doğru türlerde */
+function cleanLook(l) {
+  if (!l || typeof l !== 'object') return null;
+  const out = {};
+  for (const k of ['shirt', 'pants', 'skin', 'hair', 'eyes', 'glasses', 'beardColor']) if (Number.isFinite(l[k])) out[k] = l[k] | 0;
+  if (l.hat === null || Number.isFinite(l.hat)) out.hat = l.hat === null ? null : l.hat | 0;
+  if (['bere', 'sapka', 'kaptan'].includes(l.hatType)) out.hatType = l.hatType;
+  if (l.mustache === true || l.mustache === false || l.mustache === 'kalin') out.mustache = l.mustache;
+  if ([true, false, 'full', 'keci', 'kirli'].includes(l.beard)) out.beard = l.beard;
+  if (typeof l.thickBrows === 'boolean') out.thickBrows = l.thickBrows;
+  return out;
+}
+
 const validName = (n) => /^[A-Za-z0-9_ÇĞİÖŞÜçğıöşü]{3,16}$/.test(String(n || ''));
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const progress = (s) => (s.done ? 1e9 : num(s.ch) * 10000 + num(s.step) * 100 + Math.min(99, num(s.count)));
@@ -166,7 +209,7 @@ function broadcast(msg, exceptId, zone) {
   }
 }
 
-const pub = (p) => ({ id: p.id, name: p.name, zone: p.zone, color: p.color, x: p.x, y: p.y, z: p.z, ry: p.ry, anim: p.anim, level: p.level, rebirths: p.rebirths });
+const pub = (p) => ({ id: p.id, name: p.name, zone: p.zone, color: p.color, x: p.x, y: p.y, z: p.z, ry: p.ry, anim: p.anim, level: p.level, rebirths: p.rebirths, title: p.title || '', look: p.look || null });
 
 function boardList() {
   return Object.entries(board.get())
@@ -178,7 +221,7 @@ function boardList() {
 // ---------- HTTP (Render sağlık kontrolü ve tarayıcıdan bakınca bilgi) ----------
 const http = createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
-  res.end(`⚓ How to Davut sunucusu çalışıyor! Çevrimiçi: ${players.size} oyuncu.\n`);
+  res.end(`⚓ How to Davut sunucusu çalışıyor! Çevrimiçi: ${players.size} oyuncu + 🤖 Admin.\n`);
 });
 const wss = new WebSocketServer({ server: http });
 
@@ -224,9 +267,11 @@ wss.on('connection', (ws, req) => {
         p.name = name;
         p.zone = String(m.zone || 'liman');
         p.color = num(m.color, id) % 8;
+        p.title = clean(m.title || '').text.slice(0, 24);
+        p.look = cleanLook(m.look);
         p.joined = true;
         players.set(id, p);
-        send(ws, { t: 'welcome', id, players: [...players.values()].filter((o) => o.id !== id).map(pub), board: boardList(), story: story.get() });
+        send(ws, { t: 'welcome', id, players: [pub(botP), ...[...players.values()].filter((o) => o.id !== id).map(pub)], board: boardList(), story: story.get() });
         broadcast({ t: 'join', p: pub(p) }, id);
         broadcast({ t: 'announce', text: `🌍 ${p.name} oyuna katıldı!` }, id);
         setTimeout(() => botTo(ws, `Hoş geldin ${p.name}! ⚓ Komutlar için /yardim yaz. Kurallar: /kurallar`), 1500);
@@ -236,6 +281,14 @@ wss.on('connection', (ws, req) => {
       case 'state':
         p.x = num(m.x); p.y = num(m.y); p.z = num(m.z); p.ry = num(m.ry);
         p.anim = String(m.anim || 'idle').slice(0, 8);
+        break;
+      case 'look':
+        p.look = cleanLook(m.look);
+        broadcast({ t: 'look', id, look: p.look }, id);
+        break;
+      case 'title':
+        p.title = clean(m.title || '').text.slice(0, 24);
+        broadcast({ t: 'title', id, title: p.title }, id);
         break;
       case 'zone':
         p.zone = String(m.zone || 'liman');
@@ -251,6 +304,16 @@ wss.on('connection', (ws, req) => {
         if (!moderate(p, bad)) return;
         broadcast({ t: 'chat', id, name: p.name, text }, id);
         send(ws, { t: 'chat', id, name: p.name, text });
+        break;
+      }
+      case 'gift': {
+        // balık hediyesi: aynı adadaki oyuncuya, alanları doğrulanarak
+        const to = players.get(num(m.to));
+        const f = m.fish || {};
+        if (!to || to.zone !== p.zone || typeof f.id !== 'string' || f.id.length > 24) return;
+        const fish = { id: f.id, kg: Math.max(0, Math.min(5000, num(f.kg))), value: Math.max(1, Math.min(1e7, num(f.value, 1))), mutation: typeof f.mutation === 'string' ? f.mutation.slice(0, 12) : undefined };
+        send(to.ws, { t: 'gift', from: id, name: p.name, fish });
+        botAll(`🎁 ${p.name}, ${to.name} oyuncusuna balık hediye etti!`);
         break;
       }
       case 'rtc': {
@@ -314,6 +377,9 @@ setInterval(() => {
     if (!byZone.has(p.zone)) byZone.set(p.zone, []);
     byZone.get(p.zone).push([p.id, +p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2), +p.ry.toFixed(2), p.anim]);
   }
+  const bot = [0, +botP.x.toFixed(2), botP.y, +botP.z.toFixed(2), +botP.ry.toFixed(2), botP.anim];
+  if (!byZone.has('liman')) byZone.set('liman', []);
+  byZone.get('liman').push(bot);
   for (const [zone, list] of byZone) broadcast({ t: 'states', list }, undefined, zone);
 }, 100);
 
@@ -334,6 +400,15 @@ setInterval(() => {
     p.ws.ping();
   }
 }, 15000);
+
+// Render'ın ücretsiz planı 15 dakika istek gelmezse sunucuyu uyutur.
+// Sunucu kendi adresine 10 dakikada bir uğrar: hep açık kalır, Admin bot hep oyunda olur.
+const SELF_URL = process.env.RENDER_EXTERNAL_URL;
+if (SELF_URL) {
+  setInterval(() => {
+    fetch(SELF_URL).catch(() => {});
+  }, 10 * 60 * 1000);
+}
 
 http.listen(PORT, () => {
   const ips = Object.values(networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address);
