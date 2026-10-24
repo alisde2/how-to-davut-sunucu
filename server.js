@@ -49,11 +49,104 @@ let nextId = 1;
 
 // Çocuk dostu sohbet: kaba kelimeleri yıldızla
 const BAD = ['aptal', 'salak', 'gerizekalı', 'mal', 'öküz', 'şerefsiz', 'lan'];
+/** @returns { text, bad } bad: kaç kaba kelime yıldızlandı */
 function clean(text) {
   let t = String(text).slice(0, 80).replace(/[<>]/g, '');
+  let bad = 0;
   // \b Türkçe harflerde çalışmadığı için boşluk/noktalama sınırı kullanılır
-  for (const w of BAD) t = t.replace(new RegExp(`(^|[\\s.,!?])${w}(?=$|[\\s.,!?])`, 'gi'), (_, pre) => pre + '*'.repeat(w.length));
-  return t.trim();
+  for (const w of BAD) t = t.replace(new RegExp(`(^|[\\s.,!?])${w}(?=$|[\\s.,!?])`, 'gi'), (_, pre) => { bad++; return pre + '*'.repeat(w.length); });
+  return { text: t.trim(), bad };
+}
+
+// ---------- 🤖 Admin bot: sohbeti yönetir ----------
+const BOT = '🤖 Admin';
+const ZONE_NAMES = { liman: 'Liman Köyü', sisli: 'Sisli Göl', buz: 'Buz Koyu', volkan: 'Volkan Adası', derin: 'Derin Deniz' };
+const RULES = [
+  '1) Herkese saygılı ol, kaba konuşma yok.',
+  '2) Sohbeti mesaj yağmuruna tutma (spam = susturma).',
+  '3) Kaba kelime: önce uyarı, sonra susturma, en son atılma.',
+  '4) Birbirinize yardım edin, hikayeyi birlikte bitirin! ⚓',
+];
+const TIPS = [
+  '💡 İpucu: Balık yere düşünce basılı tutarak sürekli vurabilirsin.',
+  '💡 İpucu: Tekne Seviye 4\'te açılır. Adalar uzak, pusulayı takip et! 🧭',
+  '💡 İpucu: Yeşil alanda vurursan 2 kat hasar verirsin.',
+  '💡 İpucu: Davut\'un evindeki yatakta uyuyunca canın dolar. 😴',
+  '💡 İpucu: Silahçı Cemal\'de silahlarına skin alabilirsin. 🎨',
+  '💡 İpucu: 🎤 düğmesiyle sesli sohbeti açabilirsin.',
+  '💡 İpucu: M tuşu ya da mini haritaya dokunmak büyük haritayı açar. 🗺️',
+];
+
+function botTo(ws, text) {
+  send(ws, { t: 'chat', id: 0, name: BOT, text, bot: true });
+}
+function botAll(text) {
+  broadcast({ t: 'chat', id: 0, name: BOT, text, bot: true });
+}
+
+/** Spam ve küfür denetimi. @returns mesaj geçebilir mi */
+function moderate(p, bad) {
+  const now = Date.now();
+  if (p.mutedUntil > now) {
+    botTo(p.ws, `🔇 Susturuldun. ${Math.ceil((p.mutedUntil - now) / 1000)} saniye sonra yazabilirsin.`);
+    return false;
+  }
+  p.msgTimes = (p.msgTimes || []).filter((t) => now - t < 8000);
+  p.msgTimes.push(now);
+  if (p.msgTimes.length > 5) {
+    p.mutedUntil = now + 30000;
+    p.msgTimes = [];
+    botAll(`🔇 ${p.name} çok hızlı yazdığı için 30 saniye susturuldu.`);
+    return false;
+  }
+  if (bad) {
+    p.strikes = (p.strikes || 0) + 1;
+    if (p.strikes >= 5) {
+      botAll(`⛔ ${p.name} kurallara uymadığı için oyundan atıldı.`);
+      send(p.ws, { t: 'kicked', reason: 'Kaba konuşma yüzünden sunucudan atıldın.' });
+      setTimeout(() => p.ws.close(), 200);
+      return false;
+    }
+    if (p.strikes >= 3) {
+      p.mutedUntil = now + 60000;
+      botAll(`🔇 ${p.name} kaba konuştuğu için 1 dakika susturuldu.`);
+      return false;
+    }
+    botTo(p.ws, `⚠️ Lütfen kaba konuşma! (Uyarı ${p.strikes}/3)`);
+  }
+  return true;
+}
+
+/** Sohbet komutları: /yardim, /oyuncular, /kurallar, /zar, /saat, /hikaye */
+function command(p, text) {
+  const cmd = text.slice(1).split(/\s+/)[0].toLocaleLowerCase('tr');
+  switch (cmd) {
+    case 'yardim':
+    case 'yardım':
+      botTo(p.ws, 'Komutlar: /oyuncular · /kurallar · /zar · /saat · /hikaye');
+      break;
+    case 'oyuncular': {
+      const list = [...players.values()].map((o) => `${o.name} (${ZONE_NAMES[o.zone] || o.zone}, Sv ${o.level})`);
+      botTo(p.ws, `🌍 Çevrimiçi ${list.length}: ${list.join(', ')}`);
+      break;
+    }
+    case 'kurallar':
+      for (const r of RULES) botTo(p.ws, r);
+      break;
+    case 'zar':
+      botAll(`🎲 ${p.name} zar attı: ${1 + Math.floor(Math.random() * 6)}`);
+      break;
+    case 'saat':
+      botTo(p.ws, `🕒 Saat ${new Date().toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit' })}`);
+      break;
+    case 'hikaye': {
+      const s = story.get();
+      botTo(p.ws, s.done ? '📜 Ekip hikayeyi bitirdi! Kral Hamsi yakalandı. 👑' : `📜 Ekip hikayesi: Bölüm ${s.ch + 1}, adım ${s.step + 1}`);
+      break;
+    }
+    default:
+      botTo(p.ws, `❓ "/${cmd}" diye bir komut yok. /yardim yaz.`);
+  }
 }
 
 const validName = (n) => /^[A-Za-z0-9_ÇĞİÖŞÜçğıöşü]{3,16}$/.test(String(n || ''));
@@ -136,6 +229,7 @@ wss.on('connection', (ws, req) => {
         send(ws, { t: 'welcome', id, players: [...players.values()].filter((o) => o.id !== id).map(pub), board: boardList(), story: story.get() });
         broadcast({ t: 'join', p: pub(p) }, id);
         broadcast({ t: 'announce', text: `🌍 ${p.name} oyuna katıldı!` }, id);
+        setTimeout(() => botTo(ws, `Hoş geldin ${p.name}! ⚓ Komutlar için /yardim yaz. Kurallar: /kurallar`), 1500);
         console.log(`+ ${p.name} katıldı (${players.size} oyuncu) [${req.socket.remoteAddress}]`);
         break;
       }
@@ -148,10 +242,24 @@ wss.on('connection', (ws, req) => {
         broadcast({ t: 'zone', id, zone: p.zone }, id);
         break;
       case 'chat': {
-        const text = clean(m.text);
+        const { text, bad } = clean(m.text);
         if (!text) return;
+        if (text.startsWith('/')) {
+          command(p, text);
+          return;
+        }
+        if (!moderate(p, bad)) return;
         broadcast({ t: 'chat', id, name: p.name, text }, id);
         send(ws, { t: 'chat', id, name: p.name, text });
+        break;
+      }
+      case 'rtc': {
+        // sesli sohbet: WebRTC sinyallerini aynı adadaki hedef oyuncuya ilet (ses sunucudan geçmez)
+        const to = players.get(num(m.to));
+        if (!to || to.zone !== p.zone) return;
+        const data = JSON.stringify(m.data ?? null);
+        if (data.length > 12000) return;
+        send(to.ws, { t: 'rtc', from: id, data: m.data });
         break;
       }
       case 'catch':
@@ -208,6 +316,12 @@ setInterval(() => {
   }
   for (const [zone, list] of byZone) broadcast({ t: 'states', list }, undefined, zone);
 }, 100);
+
+// Admin bot ara ara ipucu verir
+let tipI = 0;
+setInterval(() => {
+  if (players.size) botAll(TIPS[tipI++ % TIPS.length]);
+}, 4 * 60 * 1000);
 
 // Kopan bağlantıları temizle
 setInterval(() => {
