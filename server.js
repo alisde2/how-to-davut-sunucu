@@ -76,7 +76,7 @@ function rollWeather() {
 // her 15 saniyede saat düzeltmesi
 setInterval(() => { if (players.size) broadcast(worldMsg()); }, 15000);
 // ortak etkinlikler: boss ve korsan baskını herkes için aynı anda olur
-const BOSS_ZONES = ['liman', 'sisli', 'buz', 'volkan', 'derin', 'akinti', 'mercan'];
+const BOSS_ZONES = ['liman', 'sisli', 'buz', 'volkan', 'derin', 'akinti', 'mercan', 'burun'];
 (function eventLoop() {
   setTimeout(() => {
     const zones = [...new Set([...players.values()].map((p) => p.zone))];
@@ -126,7 +126,7 @@ function clean(text) {
 
 // ---------- 🤖 Admin bot: sohbeti yönetir ----------
 const BOT = '🤖 Admin';
-const ZONE_NAMES = { liman: 'Liman Köyü', sisli: 'Sisli Göl', buz: 'Buz Koyu', volkan: 'Volkan Adası', derin: 'Derin Deniz', kayip: 'Kayıp Ada', ada: 'Davut Adası', akinti: 'Karanlık Akıntı', acik: 'Açık Deniz', mercan: 'Mercan Resifi' };
+const ZONE_NAMES = { liman: 'Liman Köyü', sisli: 'Sisli Göl', buz: 'Buz Koyu', volkan: 'Volkan Adası', derin: 'Derin Deniz', kayip: 'Kayıp Ada', ada: 'Davut Adası', akinti: 'Karanlık Akıntı', acik: 'Açık Deniz', mercan: 'Mercan Resifi', burun: 'Fırtına Burnu' };
 const RULES = [
   '1) Herkese saygılı ol, kaba konuşma yok.',
   '2) Sohbeti mesaj yağmuruna tutma (spam = susturma).',
@@ -384,6 +384,16 @@ wss.on('connection', (ws, req) => {
         const to = players.get(num(m.to));
         if (!to || to.zone !== p.zone) return;
         send(to.ws, { t: 'coop_hit', from: id, name: p.name, dmg: Math.max(1, Math.min(1e6, num(m.dmg, 1))) });
+        break;
+      }
+      case 'boat': {
+        // birlikte tekne: yolcu biner/iner, kaptan başka adaya yanaşınca yolcusunu da götürür
+        const to = players.get(num(m.to));
+        const kind = String(m.kind || '');
+        if (!to || !['join', 'leave', 'travel'].includes(kind)) return;
+        if (kind !== 'travel' && to.zone !== p.zone) return;
+        send(to.ws, { t: 'boat', from: id, name: p.name, kind, zone: kind === 'travel' ? String(m.zone || '').slice(0, 16) : undefined });
+        if (kind === 'join') botAll(`⛵ ${p.name}, ${to.name} oyuncusunun teknesine bindi!`);
         break;
       }
       case 'market_list':
