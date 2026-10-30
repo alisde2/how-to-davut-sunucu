@@ -76,7 +76,7 @@ function rollWeather() {
 // her 15 saniyede saat düzeltmesi
 setInterval(() => { if (players.size) broadcast(worldMsg()); }, 15000);
 // ortak etkinlikler: boss ve korsan baskını herkes için aynı anda olur
-const BOSS_ZONES = ['liman', 'sisli', 'buz', 'volkan', 'derin', 'akinti', 'mercan', 'burun'];
+const BOSS_ZONES = ['liman', 'sisli', 'buz', 'volkan', 'derin', 'akinti', 'mercan', 'burun', 'korsan', 'yakamoz'];
 (function eventLoop() {
   setTimeout(() => {
     const zones = [...new Set([...players.values()].map((p) => p.zone))];
@@ -126,7 +126,7 @@ function clean(text) {
 
 // ---------- 🤖 Admin bot: sohbeti yönetir ----------
 const BOT = '🤖 Admin';
-const ZONE_NAMES = { liman: 'Liman Köyü', sisli: 'Sisli Göl', buz: 'Buz Koyu', volkan: 'Volkan Adası', derin: 'Derin Deniz', kayip: 'Kayıp Ada', ada: 'Davut Adası', akinti: 'Karanlık Akıntı', acik: 'Açık Deniz', mercan: 'Mercan Resifi', burun: 'Fırtına Burnu' };
+const ZONE_NAMES = { liman: 'Liman Köyü', sisli: 'Sisli Göl', buz: 'Buz Koyu', volkan: 'Volkan Adası', derin: 'Derin Deniz', kayip: 'Kayıp Ada', ada: 'Davut Adası', akinti: 'Karanlık Akıntı', acik: 'Açık Deniz', mercan: 'Mercan Resifi', burun: 'Fırtına Burnu', korsan: 'Korsan Koyu', yakamoz: 'Yakamoz Adası' };
 const RULES = [
   '1) Herkese saygılı ol, kaba konuşma yok.',
   '2) Sohbeti mesaj yağmuruna tutma (spam = susturma).',
